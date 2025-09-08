@@ -1,109 +1,113 @@
-import os
-from django.shortcuts import render, redirect
-from django.core.files.storage import FileSystemStorage
-from django.http import JsonResponse, Http404
+from django.shortcuts import render, redirect, get_object_or_404
+from django.http import HttpResponse, JsonResponse, Http404, FileResponse
 from django.conf import settings
+from django.core.files.storage import default_storage
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from django.contrib import messages
+from django.urls import reverse
+from .models import UploadedFile
+import os
+import uuid
+import logging
+
+logger = logging.getLogger(__name__)
+
+def get_client_ip(request):
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0]
+    else:
+        ip = request.META.get('REMOTE_ADDR')
+    return ip
 
 def login_view(request):
-    """Handle login page"""
     if request.method == 'POST':
-        password = request.POST.get('password', '')
+        password = request.POST.get('password')
         if password == settings.SITE_PASSWORD:
             request.session['authenticated'] = True
-            return redirect('/')
+            logger.info(f"Successful authentication from IP: {get_client_ip(request)}")
+            return redirect('upload')
         else:
-            return render(request, 'login.html', {'error': 'Неправильный пароль'})
+            logger.warning(f"Failed authentication attempt from IP: {get_client_ip(request)}")
+            return render(request, 'login.html', {'error': 'Неверный пароль'})
+    
     return render(request, 'login.html')
 
-def logout_view(request):
-    """Handle logout"""
-    request.session['authenticated'] = False
-    return redirect('/login/')
-
-def upload(request):
-    """Handle file upload"""
-    context = {}
+@csrf_exempt
+def upload_view(request):
+    if not request.session.get('authenticated'):
+        return redirect('login')
     
-    if request.method == 'POST':
-        if 'document' in request.FILES:
-            upload_file = request.FILES['document']
-            fs = FileSystemStorage()
-            name = fs.save(upload_file.name, upload_file)
-            context['url'] = fs.url(name)
-            context['success'] = f'Файл "{upload_file.name}" успешно загружен'
-        else:
-            context['error'] = 'Файл не выбран'
+    uploaded_files = UploadedFile.objects.all()[:10]  # Показываем последние 10 файлов
     
-    # Get list of uploaded files
-    try:
-        media_path = settings.MEDIA_ROOT
-        if os.path.exists(media_path):
-            files = []
-            for filename in os.listdir(media_path):
-                file_path = os.path.join(media_path, filename)
-                if os.path.isfile(file_path):
-                    file_size = os.path.getsize(file_path)
-                    # Convert bytes to human readable format
-                    if file_size < 1024:
-                        size_str = f"{file_size} B"
-                    elif file_size < 1024 * 1024:
-                        size_str = f"{file_size / 1024:.1f} KB"
-                    else:
-                        size_str = f"{file_size / (1024 * 1024):.1f} MB"
-                    
-                    files.append({
-                        'name': filename,
-                        'size': size_str,
-                        'url': f"{settings.MEDIA_URL}{filename}"
-                    })
-            context['files'] = files
-    except Exception as e:
-        context['files'] = []
-    
-    return render(request, 'upload.html', context)
-
-def file_list(request):
-    """API endpoint to get file list"""
-    try:
-        media_path = settings.MEDIA_ROOT
-        files = []
-        if os.path.exists(media_path):
-            for filename in os.listdir(media_path):
-                file_path = os.path.join(media_path, filename)
-                if os.path.isfile(file_path):
-                    files.append({
-                        'name': filename,
-                        'size': os.path.getsize(file_path),
-                        'url': f"{settings.MEDIA_URL}{filename}"
-                    })
-        return JsonResponse({'files': files})
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
-
-def delete_file(request, filename):
-    """Delete a file"""
-    if request.method == 'POST':
+    if request.method == 'POST' and request.FILES.get('file'):
         try:
-            file_path = os.path.join(settings.MEDIA_ROOT, filename)
-            if os.path.exists(file_path) and os.path.isfile(file_path):
-                os.remove(file_path)
-                if request.headers.get('Content-Type') == 'application/json':
-                    return JsonResponse({'success': True, 'message': f'Файл "{filename}" удален'})
-                else:
-                    messages.success(request, f'Файл "{filename}" успешно удален')
-                    return redirect('/')
-            else:
-                if request.headers.get('Content-Type') == 'application/json':
-                    return JsonResponse({'success': False, 'error': 'Файл не найден'}, status=404)
-                else:
-                    messages.error(request, 'Файл не найден')
-                    return redirect('/')
+            uploaded_file = request.FILES['file']
+            
+            # Генерируем уникальное имя файла
+            file_extension = os.path.splitext(uploaded_file.name)[1]
+            unique_filename = f"{uuid.uuid4()}{file_extension}"
+            file_path = os.path.join(settings.MEDIA_ROOT, unique_filename)
+            
+            # Сохраняем файл
+            with default_storage.open(unique_filename, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+            
+            # Сохраняем информацию в базу данных
+            file_record = UploadedFile.objects.create(
+                original_name=uploaded_file.name,
+                file_path=file_path,
+                file_size=uploaded_file.size,
+                uploader_ip=get_client_ip(request)
+            )
+            
+            logger.info(f"File uploaded successfully: {uploaded_file.name} by IP: {get_client_ip(request)}")
+            messages.success(request, f'Файл "{uploaded_file.name}" успешно загружен!')
+            
+            return redirect('upload')
+            
         except Exception as e:
-            if request.headers.get('Content-Type') == 'application/json':
-                return JsonResponse({'success': False, 'error': str(e)}, status=500)
-            else:
-                messages.error(request, f'Ошибка при удалении файла: {str(e)}')
-                return redirect('/')
-    else:
-        raise Http404("Method not allowed")
+            logger.error(f"Upload error: {str(e)}")
+            messages.error(request, 'Ошибка при загрузке файла. Попробуйте снова.')
+    
+    return render(request, 'upload.html', {
+        'uploaded_files': uploaded_files
+    })
+
+def download_file(request, file_id):
+    file_record = get_object_or_404(UploadedFile, id=file_id)
+    
+    if not file_record.file_exists():
+        raise Http404("Файл не найден")
+    
+    # Увеличиваем счетчик скачиваний
+    file_record.download_count += 1
+    file_record.save()
+    
+    logger.info(f"File downloaded: {file_record.original_name} by IP: {get_client_ip(request)}")
+    
+    response = FileResponse(
+        open(file_record.file_path, 'rb'),
+        as_attachment=True,
+        filename=file_record.original_name
+    )
+    return response
+
+def delete_file(request, file_id):
+    if not request.session.get('authenticated'):
+        return redirect('login')
+    
+    file_record = get_object_or_404(UploadedFile, id=file_id)
+    original_name = file_record.original_name
+    
+    try:
+        file_record.delete_file()
+        messages.success(request, f'Файл "{original_name}" удален!')
+        logger.info(f"File deleted: {original_name} by IP: {get_client_ip(request)}")
+    except Exception as e:
+        logger.error(f"Delete error: {str(e)}")
+        messages.error(request, 'Ошибка при удалении файла.')
+    
+    return redirect('upload')
