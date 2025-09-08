@@ -22,9 +22,11 @@ class UploadedFile(models.Model):
         return f"/media/{os.path.basename(self.file_path)}"
     
     def file_exists(self):
-        return os.path.exists(self.file_path)
+        full_path = os.path.join(settings.MEDIA_ROOT, self.file_path)
+        return os.path.exists(full_path)
     
     def delete_file(self):
+        full_path = os.path.join(settings.MEDIA_ROOT, self.file_path)
         if self.file_exists():
-            os.remove(self.file_path)
+            os.remove(full_path)
         self.delete()
