@@ -48,17 +48,17 @@ def upload_view(request):
             # Генерируем уникальное имя файла
             file_extension = os.path.splitext(uploaded_file.name)[1]
             unique_filename = f"{uuid.uuid4()}{file_extension}"
-            file_path = os.path.join(settings.MEDIA_ROOT, unique_filename)
-            
+            relative_file_path = f"uploads/{unique_filename}"  # Относительный путь: uploads/abc123.txt
+
             # Сохраняем файл
-            with default_storage.open(unique_filename, 'wb+') as destination:
+            with default_storage.open(relative_file_path, 'wb+') as destination:
                 for chunk in uploaded_file.chunks():
                     destination.write(chunk)
-            
+
             # Сохраняем информацию в базу данных
             file_record = UploadedFile.objects.create(
                 original_name=uploaded_file.name,
-                file_path=file_path,
+                file_path=relative_file_path,  # Сохраняем относительный путь
                 file_size=uploaded_file.size,
                 uploader_ip=get_client_ip(request)
             )
@@ -111,3 +111,4 @@ def delete_file(request, file_id):
         messages.error(request, 'Ошибка при удалении файла.')
     
     return redirect('upload')
+
