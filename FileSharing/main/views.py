@@ -87,9 +87,10 @@ def download_file(request, file_id):
     file_record.save()
     
     logger.info(f"File downloaded: {file_record.original_name} by IP: {get_client_ip(request)}")
-    
+
+    full_file_path = os.path.join(settings.MEDIA_ROOT, file_record.file_path)
     response = FileResponse(
-        open(file_record.file_path, 'rb'),
+        open(full_file_path, 'rb'),
         as_attachment=True,
         filename=file_record.original_name
     )
@@ -111,4 +112,5 @@ def delete_file(request, file_id):
         messages.error(request, 'Ошибка при удалении файла.')
     
     return redirect('upload')
+
 
