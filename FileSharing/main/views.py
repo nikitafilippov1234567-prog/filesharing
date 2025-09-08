@@ -34,7 +34,6 @@ def login_view(request):
     
     return render(request, 'login.html')
 
-@csrf_exempt
 def upload_view(request):
     if not request.session.get('authenticated'):
         return redirect('login')
@@ -112,5 +111,6 @@ def delete_file(request, file_id):
         messages.error(request, 'Ошибка при удалении файла.')
     
     return redirect('upload')
+
 
 
