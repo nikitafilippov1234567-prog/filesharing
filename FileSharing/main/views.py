@@ -67,8 +67,14 @@ def upload_view(request):
             
             return redirect('upload')
             
+        except PermissionError as e:
+            logger.error(f"Permission error during upload: {str(e)}")
+            messages.error(request, 'Ошибка: Нет прав для сохранения файла.')
+        except OSError as e:
+            logger.error(f"OS error during upload: {str(e)}")
+            messages.error(request, 'Ошибка: Проблема с файловой системой.')
         except Exception as e:
-            logger.error(f"Upload error: {str(e)}")
+            logger.error(f"Unexpected upload error: {str(e)}")
             messages.error(request, 'Ошибка при загрузке файла. Попробуйте снова.')
     
     return render(request, 'upload.html', {
@@ -111,6 +117,7 @@ def delete_file(request, file_id):
         messages.error(request, 'Ошибка при удалении файла.')
     
     return redirect('upload')
+
 
 
 
